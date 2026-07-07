@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EMBA Scanner</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,-apple-system,sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}
+  .header{background:#161b22;border-bottom:1px solid #30363d;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}
+  .header h1{font-size:20px;color:#58a6ff}
+  .header .version{color:#8b949e;font-size:14px}
+  .container{max-width:960px;margin:0 auto;padding:24px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;margin-bottom:16px}
+  .card h2{font-size:16px;color:#c9d1d9;margin-bottom:16px;border-bottom:1px solid #21262d;padding-bottom:8px}
+  label{display:block;font-size:13px;color:#8b949e;margin-bottom:4px}
+  input[type=file],select,button{font-size:14px}
+  input[type=file]{color:#c9d1d9}
+  select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;width:200px}
+  .row{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
+  .row>div{display:flex;flex-direction:column;gap:4px}
+  .btn{background:#238636;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-weight:600}
+  .btn:hover{background:#2ea043}
+  .btn:disabled{opacity:0.5;cursor:not-allowed}
+  .btn-danger{background:#da3633}
+  .btn-danger:hover{background:#f85149}
+  .btn-sm{padding:4px 12px;font-size:12px;border-radius:4px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;padding:8px 10px;color:#8b949e;border-bottom:1px solid #21262d;font-weight:600}
+  td{padding:8px 10px;border-bottom:1px solid #21262d}
+  .status{padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+  .status-pending{background:#1f2328;color:#8b949e}
+  .status-running{background:#0c2d6b;color:#58a6ff}
+  .status-completed{background:#0d2818;color:#3fb950}
+  .status-failed{background:#3d1214;color:#f85149}
+  .actions{display:flex;gap:6px;flex-wrap:wrap}
+  .btn-link{background:none;color:#58a6ff;border:1px solid #30363d;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px}
+  .btn-link:hover{background:#1f2328}
+  .log-box{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;height:300px;overflow:auto;white-space:pre;color:#8b949e;line-height:1.5}
+  .empty{text-align:center;color:#484f58;padding:40px 0}
+  .progress-text{font-size:12px;color:#58a6ff;margin-top:8px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>EMBA Scanner</h1>
+  <div style="text-align:right">
+    <div class="version" id="version">loading...</div>
+    <div style="font-size:12px;color:#484f58" id="embaPath"></div>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card">
+    <h2>Upload Firmware</h2>
+    <div class="row">
+      <div style="flex:1">
+        <label>Firmware file</label>
+        <input type="file" id="fwFile">
+      </div>
+      <div>
+        <label>Scan profile</label>
+        <select id="profileSelect"><option value="">-- default --</option></select>
+      </div>
+      <div>
+        <label>Modules (comma separated)</label>
+        <input type="text" id="modulesInput" placeholder="e.g. S10,S25" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;width:200px">
+      </div>
+    </div>
+    <div class="row">
+      <div style="flex:1"></div>
+      <button class="btn" id="startBtn" onclick="startScan()">Start Scan</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Tasks</h2>
+    <div id="taskList"><div class="empty">No tasks</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Live Log</h2>
+    <div class="log-box" id="logBox">Waiting for scan to start...</div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentTaskId = null;
+let ws = null;
+let pollTimer = null;
+
+function stripAnsi(str) {
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+}
+
+async function loadVersion() {
+  try {
+    const r = await fetch(`${API}/api/version`);
+    const d = await r.json();
+    document.getElementById('version').textContent = `v${d.version}`;
+    document.getElementById('embaPath').textContent = d.emba_path;
+  } catch(e) {
+    document.getElementById('version').textContent = 'v?';
+  }
+}
+
+async function loadProfiles() {
+  try {
+    const r = await fetch(`${API}/api/scan/profiles`);
+    const list = await r.json();
+    const sel = document.getElementById('profileSelect');
+    list.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p;
+      opt.textContent = p;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+let currentPage = 1;
+const PAGE_SIZE = 5;
+
+async function loadTasks(page) {
+  currentPage = page || currentPage;
+  try {
+    const r = await fetch(`${API}/api/scan?page=${currentPage}&page_size=${PAGE_SIZE}`);
+    const data = await r.json();
+    const tasks = data.items;
+    const box = document.getElementById('taskList');
+    if (!tasks.length) {
+      box.innerHTML = '<div class="empty">No tasks</div>';
+      return;
+    }
+    const totalPages = Math.ceil(data.total / PAGE_SIZE);
+    box.innerHTML = `<table>
+      <tr><th>ID</th><th>Status</th><th>Progress</th><th>Created</th><th>Actions</th></tr>
+      ${tasks.map(t => `<tr>
+        <td style="font-family:monospace">${t.task_id}</td>
+        <td><span class="status status-${t.status}">${t.status}</span></td>
+        <td>${t.progress && t.progress.current_module ? t.progress.current_module : '-'}<br>
+            <span style="color:#8b949e;font-size:11px">${t.progress ? t.progress.elapsed_seconds + 's' : ''}</span></td>
+        <td style="font-size:12px;color:#8b949e">${new Date(t.created_at).toLocaleString()}</td>
+        <td class="actions">
+          <button class="btn-link" onclick="viewLogs('${t.task_id}')">Logs</button>
+          ${t.status === 'completed' ? `
+            <a class="btn-link" href="${API}/api/scan/${t.task_id}/report" target="_blank">Report</a>
+            <a class="btn-link" href="${API}/api/scan/${t.task_id}/sbom" target="_blank">SBOM</a>
+          ` : ''}
+          <button class="btn-link" style="color:#f85149" onclick="deleteTask('${t.task_id}')">Delete</button>
+        </td>
+      </tr>`).join('')}
+    </table>
+    ${totalPages > 1 ? `<div style="display:flex;justify-content:center;gap:8px;margin-top:12px">
+      <button class="btn-link" onclick="loadTasks(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>Prev</button>
+      <span style="color:#8b949e;font-size:13px;line-height:28px">${currentPage} / ${totalPages}</span>
+      <button class="btn-link" onclick="loadTasks(${currentPage + 1})" ${currentPage >= totalPages ? 'disabled' : ''}>Next</button>
+    </div>` : ''}`;
+  } catch(e) {}
+}
+
+async function startScan() {
+  const file = document.getElementById('fwFile').files[0];
+  if (!file) { alert('Please select a firmware file'); return; }
+
+  const btn = document.getElementById('startBtn');
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+
+  const fd = new FormData();
+  fd.append('firmware', file);
+
+  const profile = document.getElementById('profileSelect').value;
+  if (profile) fd.append('profile', profile);
+
+  const modules = document.getElementById('modulesInput').value.trim();
+  if (modules) fd.append('modules', modules);
+
+  try {
+    const r = await fetch(`${API}/api/scan`, { method: 'POST', body: fd });
+    if (!r.ok) {
+      const err = await r.json();
+      alert(err.detail || 'Failed to start scan');
+      return;
+    }
+    const d = await r.json();
+    currentTaskId = d.task_id;
+    connectWS(d.task_id);
+    loadTasks();
+    pollStatus(d.task_id);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Start Scan';
+  }
+}
+
+function connectWS(taskId) {
+  if (ws) { ws.close(); ws = null; }
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}/ws/scan/${taskId}`);
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    const box = document.getElementById('logBox');
+    const time = new Date(msg.timestamp).toLocaleTimeString();
+    const prefix = msg.type === 'progress' ? `[${msg.module}]` :
+                   msg.type === 'completed' ? '[DONE]' :
+                   msg.type === 'error' ? '[ERR]' : '[LOG]';
+    box.textContent += `\n${time} ${prefix} ${stripAnsi(msg.message)}`;
+    box.scrollTop = box.scrollHeight;
+  };
+  ws.onclose = () => { ws = null; };
+}
+
+function pollStatus(taskId) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(`${API}/api/scan/${taskId}`);
+      const d = await r.json();
+      loadTasks();
+      if (d.status === 'completed' || d.status === 'failed') {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        if (d.status === 'completed') {
+          document.getElementById('logBox').textContent += '\n--- Scan completed ---';
+        }
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+async function viewLogs(taskId) {
+  try {
+    const r = await fetch(`${API}/api/scan/${taskId}/logs`);
+    if (!r.ok) { alert('Logs not found'); return; }
+    const text = await r.text();
+    document.getElementById('logBox').textContent = stripAnsi(text);
+    document.getElementById('logBox').scrollTop = document.getElementById('logBox').scrollHeight;
+    currentTaskId = taskId;
+  } catch(e) { alert('Error: ' + e.message); }
+}
+
+async function deleteTask(taskId) {
+  if (!confirm('Delete this task?')) return;
+  try {
+    await fetch(`${API}/api/scan/${taskId}`, { method: 'DELETE' });
+    if (currentTaskId === taskId) currentTaskId = null;
+    loadTasks();
+  } catch(e) {}
+}
+
+loadVersion();
+loadProfiles();
+loadTasks();
+</script>
+</body>
+</html>
