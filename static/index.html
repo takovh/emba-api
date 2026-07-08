@@ -231,7 +231,7 @@ function openTab(taskId, status) {
 
   const tab = {
     logs: '',
-    ws: null,
+    es: null,
     pollTimer: null,
     status: status
   };
@@ -249,17 +249,12 @@ function openTab(taskId, status) {
 
 function connectTabWS(taskId) {
   const tab = tabs[taskId];
-  if (!tab || tab.ws) return;
+  if (!tab || tab.es) return;
 
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  tab.ws = new WebSocket(`${proto}://${location.host}/ws/scan/${taskId}`);
-  tab.ws.onmessage = (e) => {
+  tab.es = new EventSource(`${API}/api/scan/${taskId}/events`);
+  tab.es.onmessage = (e) => {
     const msg = JSON.parse(e.data);
-    const time = new Date(msg.timestamp).toLocaleTimeString();
-    const prefix = msg.type === 'progress' ? '[PROGRESS]' :
-                   msg.type === 'completed' ? '[DONE]' :
-                   msg.type === 'error' ? '[ERR]' : '[LOG]';
-    tab.logs += `${time} ${prefix} ${stripAnsi(msg.message)}\n`;
+    tab.logs += `${stripAnsi(msg.message)}\n`;
     if (activeTab === taskId) {
       const box = document.getElementById('logBox');
       box.textContent = tab.logs;
@@ -272,14 +267,13 @@ function connectTabWS(taskId) {
       renderTabs();
     }
   };
-  tab.ws.onclose = () => { tab.ws = null; };
-  tab.ws.onerror = () => { tab.ws = null; };
+  tab.es.onerror = () => {};
 }
 
 function closeTabWS(taskId) {
   const tab = tabs[taskId];
   if (!tab) return;
-  if (tab.ws) { tab.ws.close(); tab.ws = null; }
+  if (tab.es) { tab.es.close(); tab.es = null; }
   if (tab.pollTimer) { clearInterval(tab.pollTimer); tab.pollTimer = null; }
 }
 

@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import zipfile
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
 
 from config import EMBA_PATH, EMBA_VERSION_FILE
 from models import ScanCreateResponse, VersionResponse
-from tasks import count_running, delete_task, get_all_tasks, get_task, start_scan
+from tasks import (
+    count_running,
+    delete_task,
+    get_all_history,
+    get_all_tasks,
+    get_history_after,
+    get_task,
+    register_sse,
+    start_scan,
+    unregister_sse,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -157,3 +168,44 @@ def list_scans(page: int = 1, page_size: int = 20):
             for t in result["items"]
         ],
     }
+
+
+@router.get("/scan/{task_id}/events")
+async def scan_events(
+    task_id: str,
+    last_event_id: Optional[str] = Header(None),
+):
+    task = get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    queue: asyncio.Queue[tuple[int, str]] = asyncio.Queue()
+    client_id = register_sse(task_id, queue)
+
+    async def event_stream():
+        try:
+            if last_event_id:
+                after_id = int(last_event_id)
+                for eid, payload in get_history_after(task_id, after_id):
+                    yield f"id: {eid}\ndata: {payload}\n\n"
+            else:
+                for eid, payload in get_all_history(task_id):
+                    yield f"id: {eid}\ndata: {payload}\n\n"
+
+            while True:
+                eid, msg = await queue.get()
+                yield f"id: {eid}\ndata: {msg}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            unregister_sse(task_id, client_id)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

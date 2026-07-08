@@ -56,6 +56,7 @@ def delete_task(task_id: str) -> bool:
     with _lock:
         ri = _runtime.pop(task_id, None)
         _message_buffer.pop(task_id, None)
+        _event_id_counter.pop(task_id, None)
     task = db_get_task(task_id)
     if ri is None and task is None:
         return False
@@ -150,7 +151,7 @@ def _monitor(task_id: str) -> None:
 
     log_path = str(Path(task["log_dir"]) / "emba.log")
     log_reader = LogReader(log_path)
-    _notify_ws(task_id, "progress", "Scan started")
+    _notify_sse(task_id, "progress", "Scan started")
 
     while True:
         time.sleep(2)
@@ -171,55 +172,50 @@ def _monitor(task_id: str) -> None:
                 shutil.rmtree(fw_tmp, ignore_errors=True)
             db_complete_task(task_id, exit_code, elapsed)
             db_update_console_log_tmp(task_id, "")
-            _notify_ws(task_id, "completed", f"Scan finished (exit={exit_code})")
+            _notify_sse(task_id, "completed", f"Scan finished (exit={exit_code})")
             return
 
         new_lines = log_reader.read_new_lines()
         for line in new_lines:
-            _notify_ws(task_id, "log", line)
+            _notify_sse(task_id, "log", line)
 
         db_update_progress(task_id, elapsed)
 
 
-_ws_connections: dict[str, list] = {}
-_event_loop: Optional[asyncio.AbstractEventLoop] = None
-_message_buffer: dict[str, list] = {}
+_sse_clients: dict[str, dict[str, asyncio.Queue]] = {}
+_event_id_counter: dict[str, int] = {}
+_message_buffer: dict[str, list[tuple[int, str]]] = {}
 _BUFFER_MAX = 200
 
 
-def set_event_loop(loop: asyncio.AbstractEventLoop) -> None:
-    global _event_loop
-    _event_loop = loop
+def register_sse(task_id: str, queue: asyncio.Queue) -> str:
+    client_id = uuid.uuid4().hex[:8]
+    with _lock:
+        _sse_clients.setdefault(task_id, {})[client_id] = queue
+    return client_id
 
 
-def get_message_buffer(task_id: str) -> list:
+def unregister_sse(task_id: str, client_id: str) -> None:
+    with _lock:
+        clients = _sse_clients.get(task_id, {})
+        clients.pop(client_id, None)
+        if not clients:
+            _sse_clients.pop(task_id, None)
+
+
+def get_all_history(task_id: str) -> list[tuple[int, str]]:
     with _lock:
         return list(_message_buffer.get(task_id, []))
 
 
-def _buffer_message(task_id: str, payload: str) -> None:
+def get_history_after(task_id: str, after_id: int) -> list[tuple[int, str]]:
     with _lock:
-        buf = _message_buffer.setdefault(task_id, [])
-        buf.append(payload)
-        if len(buf) > _BUFFER_MAX:
-            _message_buffer[task_id] = buf[-_BUFFER_MAX:]
+        buf = _message_buffer.get(task_id, [])
+        return [(eid, p) for eid, p in buf if eid > after_id]
 
 
-def register_ws(task_id: str, ws) -> None:
-    with _lock:
-        _ws_connections.setdefault(task_id, []).append(ws)
-
-
-def unregister_ws(task_id: str, ws) -> None:
-    with _lock:
-        conns = _ws_connections.get(task_id, [])
-        if ws in conns:
-            conns.remove(ws)
-
-
-def _notify_ws(task_id: str, msg_type: str, message: str) -> None:
+def _notify_sse(task_id: str, msg_type: str, message: str) -> None:
     import json
-
     from datetime import datetime as dt
 
     payload = json.dumps(
@@ -229,13 +225,18 @@ def _notify_ws(task_id: str, msg_type: str, message: str) -> None:
             "timestamp": dt.now(timezone.utc).isoformat(),
         }
     )
-    _buffer_message(task_id, payload)
+
     with _lock:
-        conns = list(_ws_connections.get(task_id, []))
-    for ws in conns:
+        _event_id_counter[task_id] = _event_id_counter.get(task_id, 0) + 1
+        event_id = _event_id_counter[task_id]
+        buf = _message_buffer.setdefault(task_id, [])
+        buf.append((event_id, payload))
+        if len(buf) > _BUFFER_MAX:
+            _message_buffer[task_id] = buf[-_BUFFER_MAX:]
+        clients = _sse_clients.get(task_id, {}).copy()
+
+    for queue in clients.values():
         try:
-            coro = ws.send_text(payload)
-            if _event_loop and _event_loop.is_running():
-                asyncio.run_coroutine_threadsafe(coro, _event_loop)
-        except Exception:
+            queue.put_nowait((event_id, payload))
+        except asyncio.QueueFull:
             pass

@@ -11,7 +11,7 @@
 | API 框架 | FastAPI (Python) | 原生 async、自动 OpenAPI 文档、Pydantic 校验 |
 | 任务执行 | subprocess 调用 ./emba | 简单直接，复用 EMBA 现有能力 |
 | 异步任务 | FastAPI BackgroundTasks | 处理耗时的扫描任务 |
-| 实时进度 | WebSocket (FastAPI 原生) | 推送扫描进度到前端 |
+| 实时进度 | SSE (Server-Sent Events) | 服务端推送，自动重连，实现简单 |
 | 部署方式 | 裸机部署 | 直接在宿主机运行 |
 
 ## 项目结构
@@ -25,7 +25,6 @@ emba-api/
 ├── database.py          # SQLite 数据库操作
 ├── models.py            # Pydantic 数据模型
 ├── tasks.py             # 后台任务管理（启动 EMBA、监控进程）
-├── websocket.py         # WebSocket 进度推送
 ├── routers/
 │   └── scan.py          # /api/scan 路由
 ├── utils/
@@ -115,20 +114,20 @@ status 可选值：`pending` | `running` | `completed` | `failed`
 
 响应 200：删除任务及所有相关文件
 
-### 8. WebSocket 实时进度
+### 8. SSE 实时进度
 
-**WS /ws/scan/{task_id}**
+**GET /api/scan/{task_id}/events**
 
-连接后持续接收 JSON 消息：
+连接后持续接收 SSE 事件，每个事件格式：
 
-```json
-{
-  "type": "progress",
-  "module": "S09_firmware_base_version_check",
-  "message": "...",
-  "timestamp": "2026-07-07T10:02:00Z"
-}
 ```
+id: 1
+data: {"type":"progress","message":"...","timestamp":"2026-07-07T10:02:00Z"}
+```
+
+- 支持 `Last-Event-ID` 头实现断线重连
+- 新客户端（无 `Last-Event-ID`）会收到缓冲区全部历史消息
+- 重连客户端只收到 `Last-Event-ID` 之后的消息
 
 type 可选值：`progress` | `log` | `completed` | `error`
 
@@ -210,7 +209,7 @@ uv run main.py       # 启动服务
 
 - 查询 EMBA 版本
 - 上传固件文件并启动扫描（选择配置文件）
-- 实时显示扫描进度（WebSocket）
+- 实时显示扫描进度（SSE）
 - 查看/下载日志、报告、SBOM
 - 任务列表管理
 
@@ -241,7 +240,7 @@ uv run main.py       # 启动服务
 | 页面 | 单个 `index.html` | 内嵌 CSS + JS，无构建工具 |
 | 样式 | 原生 CSS | 简洁暗色主题 |
 | HTTP 请求 | 原生 `fetch` | 无需 jQuery/axios |
-| WebSocket | 原生 `WebSocket` API | 实时进度 |
+| 实时更新 | 原生 `EventSource` API | SSE 自动重连 |
 | 文件托管 | FastAPI `StaticFiles` | 挂载 `static/` 目录 |
 
 ### 文件结构
@@ -257,7 +256,7 @@ emba-api/
 1. **页面加载** → 调用 `GET /api/version` 显示版本号
 2. **选择文件** → 用户选择固件文件和配置文件
 3. **点击扫描** → `POST /api/scan` 上传文件，返回 task_id
-4. **建立 WebSocket** → 连接 `WS /ws/scan/{task_id}` 接收进度
-5. **进度更新** → 实时更新 WebSocket 日志消息
+4. **建立 SSE** → 连接 `GET /api/scan/{task_id}/events` 接收进度
+5. **进度更新** → 实时更新 SSE 推送的消息
 6. **扫描完成** → 自动刷新任务列表，显示结果链接
 7. **下载结果** → 点击按钮调用对应 API 下载日志/报告/SBOM
