@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 import tempfile
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import EMBA_BIN, EMBA_LOG_BASE_DIR, EMBA_PATH
+from config import EMBA_LOG_BASE_DIR, EMBA_PATH
 from database import (
     db_complete_task,
     db_count_running,
@@ -19,10 +20,11 @@ from database import (
     db_get_task,
     db_insert_task,
     db_update_console_log_tmp,
+    db_update_firmware_tmp_dir,
     db_update_progress,
     db_update_status,
 )
-from utils.log_parser import get_last_log_line, is_scan_finished, parse_log_line
+from utils.log_parser import LogReader
 
 _runtime: dict[str, "RuntimeInfo"] = {}
 _lock = threading.Lock()
@@ -53,6 +55,7 @@ def count_running() -> int:
 def delete_task(task_id: str) -> bool:
     with _lock:
         ri = _runtime.pop(task_id, None)
+        _message_buffer.pop(task_id, None)
     task = db_get_task(task_id)
     if ri is None and task is None:
         return False
@@ -69,6 +72,9 @@ def delete_task(task_id: str) -> bool:
         tmp = task.get("console_log_tmp")
         if tmp and Path(tmp).exists():
             Path(tmp).unlink(missing_ok=True)
+        fw_tmp = task.get("firmware_tmp_dir")
+        if fw_tmp and Path(fw_tmp).exists():
+            shutil.rmtree(fw_tmp, ignore_errors=True)
         if task.get("log_dir") and Path(task["log_dir"]).exists():
             shutil.rmtree(task["log_dir"], ignore_errors=True)
     db_delete_task(task_id)
@@ -77,6 +83,7 @@ def delete_task(task_id: str) -> bool:
 
 def start_scan(
     firmware_path: str,
+    firmware_tmp_dir: Optional[str] = None,
     modules: Optional[str] = None,
     profile: Optional[str] = None,
     arch: Optional[str] = None,
@@ -85,8 +92,10 @@ def start_scan(
     log_dir = str(Path(EMBA_LOG_BASE_DIR) / task_id)
 
     db_insert_task(task_id, log_dir)
+    if firmware_tmp_dir:
+        db_update_firmware_tmp_dir(task_id, firmware_tmp_dir)
 
-    cmd = ["sudo", EMBA_BIN, "-f", firmware_path, "-l", log_dir]
+    cmd = ["sudo", str(Path(EMBA_PATH) / "emba"), "-f", firmware_path, "-l", log_dir]
     if profile:
         cmd.extend(["-p", profile])
     if modules:
@@ -140,6 +149,8 @@ def _monitor(task_id: str) -> None:
         return
 
     log_path = str(Path(task["log_dir"]) / "emba.log")
+    log_reader = LogReader(log_path)
+    _notify_ws(task_id, "progress", "Scan started")
 
     while True:
         time.sleep(2)
@@ -155,25 +166,43 @@ def _monitor(task_id: str) -> None:
                 dest = str(Path(task["log_dir"]) / "emba.console.log")
                 shutil.move(ri.console_log_tmp, dest)
                 ri.console_log_tmp = None
+            fw_tmp = task.get("firmware_tmp_dir")
+            if fw_tmp and Path(fw_tmp).exists():
+                shutil.rmtree(fw_tmp, ignore_errors=True)
             db_complete_task(task_id, exit_code, elapsed)
             db_update_console_log_tmp(task_id, "")
             _notify_ws(task_id, "completed", f"Scan finished (exit={exit_code})")
             return
 
-        last_line = get_last_log_line(log_path)
-        if last_line:
-            module = parse_log_line(last_line)
-            if module:
-                db_update_progress(task_id, module, elapsed)
-                _notify_ws(task_id, "progress", module, module)
+        new_lines = log_reader.read_new_lines()
+        for line in new_lines:
+            _notify_ws(task_id, "log", line)
 
-            if is_scan_finished(last_line):
-                _notify_ws(task_id, "log", last_line)
-
-        db_update_progress(task_id, task.get("current_module") or "", elapsed)
+        db_update_progress(task_id, elapsed)
 
 
 _ws_connections: dict[str, list] = {}
+_event_loop: Optional[asyncio.AbstractEventLoop] = None
+_message_buffer: dict[str, list] = {}
+_BUFFER_MAX = 200
+
+
+def set_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    global _event_loop
+    _event_loop = loop
+
+
+def get_message_buffer(task_id: str) -> list:
+    with _lock:
+        return list(_message_buffer.get(task_id, []))
+
+
+def _buffer_message(task_id: str, payload: str) -> None:
+    with _lock:
+        buf = _message_buffer.setdefault(task_id, [])
+        buf.append(payload)
+        if len(buf) > _BUFFER_MAX:
+            _message_buffer[task_id] = buf[-_BUFFER_MAX:]
 
 
 def register_ws(task_id: str, ws) -> None:
@@ -188,7 +217,7 @@ def unregister_ws(task_id: str, ws) -> None:
             conns.remove(ws)
 
 
-def _notify_ws(task_id: str, msg_type: str, message: str, module: str = "") -> None:
+def _notify_ws(task_id: str, msg_type: str, message: str) -> None:
     import json
 
     from datetime import datetime as dt
@@ -196,21 +225,17 @@ def _notify_ws(task_id: str, msg_type: str, message: str, module: str = "") -> N
     payload = json.dumps(
         {
             "type": msg_type,
-            "module": module or None,
             "message": message,
             "timestamp": dt.now(timezone.utc).isoformat(),
         }
     )
+    _buffer_message(task_id, payload)
     with _lock:
         conns = list(_ws_connections.get(task_id, []))
     for ws in conns:
         try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.create_task(ws.send_text(payload))
-            else:
-                loop.run_until_complete(ws.send_text(payload))
+            coro = ws.send_text(payload)
+            if _event_loop and _event_loop.is_running():
+                asyncio.run_coroutine_threadsafe(coro, _event_loop)
         except Exception:
             pass

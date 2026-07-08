@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
-from config import EMBA_PATH, EMBA_SCAN_PROFILES_DIR, EMBA_VERSION_FILE
+from config import EMBA_PATH, EMBA_VERSION_FILE
 from models import ScanCreateResponse, VersionResponse
 from tasks import count_running, delete_task, get_all_tasks, get_task, start_scan
 
@@ -26,7 +26,7 @@ def get_version() -> VersionResponse:
 
 @router.get("/scan/profiles")
 def list_profiles() -> list[str]:
-    profiles_dir = Path(EMBA_SCAN_PROFILES_DIR)
+    profiles_dir = Path(str(Path(EMBA_PATH) / "scan-profiles"))
     if not profiles_dir.exists():
         return []
     return sorted(p.name for p in profiles_dir.glob("*.emba"))
@@ -57,6 +57,7 @@ async def create_scan(
 
     task = start_scan(
         firmware_path=fw_path,
+        firmware_tmp_dir=tmp,
         modules=modules,
         profile=profile,
         arch=arch,
@@ -76,10 +77,7 @@ def get_scan_status(task_id: str):
     return {
         "task_id": task["task_id"],
         "status": task["status"],
-        "progress": {
-            "current_module": task["current_module"],
-            "elapsed_seconds": task["elapsed_seconds"],
-        },
+        "elapsed_seconds": task["elapsed_seconds"],
         "created_at": task["created_at"],
         "completed_at": task["completed_at"],
         "exit_code": task["exit_code"],
@@ -91,11 +89,9 @@ def get_scan_logs(task_id: str) -> PlainTextResponse:
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    final_path = Path(task["log_dir"]) / "emba.console.log"
-    if final_path.exists():
-        return PlainTextResponse(content=final_path.read_text(errors="replace"))
-    if task.get("console_log_tmp") and Path(task["console_log_tmp"]).exists():
-        return PlainTextResponse(content=Path(task["console_log_tmp"]).read_text(errors="replace"))
+    log_path = Path(task["log_dir"]) / "emba.log"
+    if log_path.exists():
+        return PlainTextResponse(content=log_path.read_text(errors="replace"))
     raise HTTPException(status_code=404, detail="Log file not found")
 
 
@@ -154,12 +150,9 @@ def list_scans(page: int = 1, page_size: int = 20):
             {
                 "task_id": t["task_id"],
                 "status": t["status"],
+                "elapsed_seconds": t["elapsed_seconds"],
                 "created_at": t["created_at"],
                 "completed_at": t["completed_at"],
-                "progress": {
-                    "current_module": t["current_module"],
-                    "elapsed_seconds": t["elapsed_seconds"],
-                },
             }
             for t in result["items"]
         ],

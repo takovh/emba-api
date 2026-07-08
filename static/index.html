@@ -36,9 +36,19 @@
   .actions{display:flex;gap:6px;flex-wrap:wrap}
   .btn-link{background:none;color:#58a6ff;border:1px solid #30363d;border-radius:4px;padding:4px 10px;cursor:pointer;font-size:12px}
   .btn-link:hover{background:#1f2328}
-  .log-box{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:12px;font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;height:300px;overflow:auto;white-space:pre;color:#8b949e;line-height:1.5}
   .empty{text-align:center;color:#484f58;padding:40px 0}
-  .progress-text{font-size:12px;color:#58a6ff;margin-top:8px}
+  .tabs{display:flex;gap:4px;margin-bottom:0;flex-wrap:wrap}
+  .tab{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#0d1117;border:1px solid #30363d;border-bottom:none;border-radius:6px 6px 0 0;cursor:pointer;font-size:12px;color:#8b949e}
+  .tab:hover{background:#161b22}
+  .tab.active{background:#161b22;color:#c9d1d9;border-color:#58a6ff}
+  .tab .close{font-size:14px;line-height:1;opacity:0.6}
+  .tab .close:hover{opacity:1;color:#f85149}
+  .tab .dot{width:6px;height:6px;border-radius:50%;background:#8b949e}
+  .tab .dot.running{background:#58a6ff}
+  .tab .dot.completed{background:#3fb950}
+  .tab .dot.failed{background:#f85149}
+  .log-box{background:#0d1117;border:1px solid #21262d;border-radius:0 6px 6px 6px;padding:12px;font-family:'Cascadia Code','Fira Code',monospace;font-size:12px;height:300px;overflow:auto;white-space:pre;color:#8b949e;line-height:1.5}
+  .log-placeholder{text-align:center;color:#484f58;padding:40px 0}
 </style>
 </head>
 <body>
@@ -79,20 +89,38 @@
     <div id="taskList"><div class="empty">No tasks</div></div>
   </div>
 
-  <div class="card">
+  <div class="card" style="padding-bottom:0">
     <h2>Live Log</h2>
-    <div class="log-box" id="logBox">Waiting for scan to start...</div>
+    <div class="tabs" id="logTabs"></div>
+    <div class="log-box" id="logBox"><div class="log-placeholder">No logs open</div></div>
   </div>
 </div>
 
 <script>
 const API = '';
-let currentTaskId = null;
-let ws = null;
-let pollTimer = null;
+let activeTab = null;
+const tabs = {};
 
 function stripAnsi(str) {
   return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '');
+}
+
+function formatElapsed(seconds) {
+  if (!seconds) return '';
+  const s = Math.floor(seconds);
+  if (s < 60) return s + 's';
+  if (s < 3600) {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return sec > 0 ? `${m}m ${sec}s` : `${m}m`;
+  }
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  let result = `${h}h`;
+  if (m > 0) result += ` ${m}m`;
+  if (sec > 0) result += ` ${sec}s`;
+  return result;
 }
 
 async function loadVersion() {
@@ -136,15 +164,14 @@ async function loadTasks(page) {
     }
     const totalPages = Math.ceil(data.total / PAGE_SIZE);
     box.innerHTML = `<table>
-      <tr><th>ID</th><th>Status</th><th>Progress</th><th>Created</th><th>Actions</th></tr>
+      <tr><th>ID</th><th>Status</th><th>Elapsed</th><th>Created</th><th>Actions</th></tr>
       ${tasks.map(t => `<tr>
         <td style="font-family:monospace">${t.task_id}</td>
         <td><span class="status status-${t.status}">${t.status}</span></td>
-        <td>${t.progress && t.progress.current_module ? t.progress.current_module : '-'}<br>
-            <span style="color:#8b949e;font-size:11px">${t.progress ? t.progress.elapsed_seconds + 's' : ''}</span></td>
+        <td><span style="color:#8b949e;font-size:11px">${formatElapsed(t.elapsed_seconds)}</span></td>
         <td style="font-size:12px;color:#8b949e">${new Date(t.created_at).toLocaleString()}</td>
         <td class="actions">
-          <button class="btn-link" onclick="viewLogs('${t.task_id}')">Logs</button>
+          <button class="btn-link" onclick="openTab('${t.task_id}','${t.status}')">Logs</button>
           ${t.status === 'completed' ? `
             <a class="btn-link" href="${API}/api/scan/${t.task_id}/report" target="_blank">Report</a>
             <a class="btn-link" href="${API}/api/scan/${t.task_id}/sbom" target="_blank">SBOM</a>
@@ -186,10 +213,8 @@ async function startScan() {
       return;
     }
     const d = await r.json();
-    currentTaskId = d.task_id;
-    connectWS(d.task_id);
+    openTab(d.task_id, 'running');
     loadTasks();
-    pollStatus(d.task_id);
   } catch(e) {
     alert('Error: ' + e.message);
   } finally {
@@ -198,58 +223,158 @@ async function startScan() {
   }
 }
 
-function connectWS(taskId) {
-  if (ws) { ws.close(); ws = null; }
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}/ws/scan/${taskId}`);
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    const box = document.getElementById('logBox');
-    const time = new Date(msg.timestamp).toLocaleTimeString();
-    const prefix = msg.type === 'progress' ? `[${msg.module}]` :
-                   msg.type === 'completed' ? '[DONE]' :
-                   msg.type === 'error' ? '[ERR]' : '[LOG]';
-    box.textContent += `\n${time} ${prefix} ${stripAnsi(msg.message)}`;
-    box.scrollTop = box.scrollHeight;
+function openTab(taskId, status) {
+  if (tabs[taskId]) {
+    activateTab(taskId);
+    return;
+  }
+
+  const tab = {
+    logs: '',
+    ws: null,
+    pollTimer: null,
+    status: status
   };
-  ws.onclose = () => { ws = null; };
+  tabs[taskId] = tab;
+  renderTabs();
+  activateTab(taskId);
+
+  if (status === 'running' || status === 'pending') {
+    connectTabWS(taskId);
+    pollTabStatus(taskId);
+  } else {
+    loadTabLogs(taskId);
+  }
 }
 
-function pollStatus(taskId) {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
+function connectTabWS(taskId) {
+  const tab = tabs[taskId];
+  if (!tab || tab.ws) return;
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  tab.ws = new WebSocket(`${proto}://${location.host}/ws/scan/${taskId}`);
+  tab.ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    const time = new Date(msg.timestamp).toLocaleTimeString();
+    const prefix = msg.type === 'progress' ? '[PROGRESS]' :
+                   msg.type === 'completed' ? '[DONE]' :
+                   msg.type === 'error' ? '[ERR]' : '[LOG]';
+    tab.logs += `${time} ${prefix} ${stripAnsi(msg.message)}\n`;
+    if (activeTab === taskId) {
+      const box = document.getElementById('logBox');
+      box.textContent = tab.logs;
+      box.scrollTop = box.scrollHeight;
+    }
+    if (msg.type === 'completed') {
+      tab.status = 'completed';
+      loadTasks();
+      closeTabWS(taskId);
+      renderTabs();
+    }
+  };
+  tab.ws.onclose = () => { tab.ws = null; };
+  tab.ws.onerror = () => { tab.ws = null; };
+}
+
+function closeTabWS(taskId) {
+  const tab = tabs[taskId];
+  if (!tab) return;
+  if (tab.ws) { tab.ws.close(); tab.ws = null; }
+  if (tab.pollTimer) { clearInterval(tab.pollTimer); tab.pollTimer = null; }
+}
+
+function pollTabStatus(taskId) {
+  const tab = tabs[taskId];
+  if (!tab || tab.pollTimer) return;
+
+  tab.pollTimer = setInterval(async () => {
     try {
       const r = await fetch(`${API}/api/scan/${taskId}`);
       const d = await r.json();
       loadTasks();
       if (d.status === 'completed' || d.status === 'failed') {
-        clearInterval(pollTimer);
-        pollTimer = null;
-        if (d.status === 'completed') {
-          document.getElementById('logBox').textContent += '\n--- Scan completed ---';
-        }
+        tab.status = d.status;
+        renderTabs();
+        closeTabWS(taskId);
       }
     } catch(e) {}
   }, 3000);
 }
 
-async function viewLogs(taskId) {
+async function loadTabLogs(taskId) {
+  const tab = tabs[taskId];
+  if (!tab) return;
   try {
     const r = await fetch(`${API}/api/scan/${taskId}/logs`);
-    if (!r.ok) { alert('Logs not found'); return; }
-    const text = await r.text();
-    document.getElementById('logBox').textContent = stripAnsi(text);
-    document.getElementById('logBox').scrollTop = document.getElementById('logBox').scrollHeight;
-    currentTaskId = taskId;
-  } catch(e) { alert('Error: ' + e.message); }
+    if (r.ok) {
+      const text = await r.text();
+      tab.logs = stripAnsi(text) + '\n';
+    } else {
+      tab.logs = 'Log file not found\n';
+    }
+  } catch(e) {
+    tab.logs = 'Failed to load logs\n';
+  }
+  if (activeTab === taskId) {
+    const box = document.getElementById('logBox');
+    box.textContent = tab.logs;
+    box.scrollTop = box.scrollHeight;
+  }
+}
+
+function activateTab(taskId) {
+  activeTab = taskId;
+  renderTabs();
+  const box = document.getElementById('logBox');
+  box.textContent = tabs[taskId]?.logs || '';
+  box.scrollTop = box.scrollHeight;
+}
+
+function closeTab(taskId) {
+  closeTabWS(taskId);
+  delete tabs[taskId];
+  if (activeTab === taskId) {
+    const keys = Object.keys(tabs);
+    activeTab = keys.length > 0 ? keys[0] : null;
+  }
+  renderTabs();
+  const box = document.getElementById('logBox');
+  if (activeTab) {
+    box.textContent = tabs[activeTab]?.logs || '';
+    box.scrollTop = box.scrollHeight;
+  } else {
+    box.innerHTML = '<div class="log-placeholder">No logs open</div>';
+  }
+}
+
+function renderTabs() {
+  const container = document.getElementById('logTabs');
+  container.innerHTML = Object.keys(tabs).map(id => {
+    const tab = tabs[id];
+    const dotClass = tab.status === 'running' || tab.status === 'pending' ? 'running' :
+                     tab.status === 'completed' ? 'completed' :
+                     tab.status === 'failed' ? 'failed' : '';
+    const activeClass = activeTab === id ? ' active' : '';
+    return `<div class="tab${activeClass}" onclick="activateTab('${id}')">
+      <span class="dot ${dotClass}"></span>
+      <span>${id}</span>
+      <span class="close" onclick="event.stopPropagation();closeTab('${id}')">&times;</span>
+    </div>`;
+  }).join('');
 }
 
 async function deleteTask(taskId) {
   if (!confirm('Delete this task?')) return;
   try {
     await fetch(`${API}/api/scan/${taskId}`, { method: 'DELETE' });
-    if (currentTaskId === taskId) currentTaskId = null;
-    loadTasks();
+    closeTab(taskId);
+    const r = await fetch(`${API}/api/scan?page=${currentPage}&page_size=${PAGE_SIZE}`);
+    const data = await r.json();
+    if (!data.items.length && currentPage > 1) {
+      loadTasks(currentPage - 1);
+    } else {
+      loadTasks(currentPage);
+    }
   } catch(e) {}
 }
 

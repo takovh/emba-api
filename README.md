@@ -22,6 +22,7 @@ emba-api/
 ├── uv.lock              # 依赖锁定文件
 ├── main.py              # FastAPI 应用入口
 ├── config.py            # 配置项（EMBA 路径、日志目录等）
+├── database.py          # SQLite 数据库操作
 ├── models.py            # Pydantic 数据模型
 ├── tasks.py             # 后台任务管理（启动 EMBA、监控进程）
 ├── websocket.py         # WebSocket 进度推送
@@ -59,8 +60,6 @@ emba-api/
 | firmware | File | 是 | 固件文件 |
 | modules | string | 否 | 模块选择，如 "S10,S25" |
 | profile | string | 否 | 扫描配置文件名 |
-| strict_mode | bool | 否 | 是否启用严格模式，默认 false |
-| html_report | bool | 否 | 是否生成 HTML 报告，默认 true |
 | arch | string | 否 | 指定架构 |
 
 响应 201：
@@ -83,13 +82,10 @@ emba-api/
 {
   "task_id": "abc123",
   "status": "running",
-  "progress": {
-    "current_module": "S09_firmware_base_version_check",
-    "elapsed_seconds": 120
-  },
+  "elapsed_seconds": 120,
   "created_at": "2026-07-07T10:00:00Z",
   "completed_at": null,
-  "result_summary": null
+  "exit_code": null
 }
 ```
 
@@ -140,9 +136,10 @@ type 可选值：`progress` | `log` | `completed` | `error`
 
 ### 任务管理
 
-- 内存字典存储任务状态：`{task_id: TaskInfo}`
-- TaskInfo 包含：pid、status、log_dir、created_at、process 对象
-- 任务完成后保留结果文件，支持手动清理
+- SQLite 数据库存储任务状态（`database.py`）
+- 运行时信息存储在内存字典 `_runtime`
+- 任务完成后自动清理固件临时文件，保留结果日志
+- 支持手动删除任务及所有相关文件
 
 ### EMBA 调用方式
 
@@ -150,7 +147,7 @@ type 可选值：`progress` | `log` | `completed` | `error`
 
 ```python
 subprocess.Popen(
-    ["sudo", EMBA_PATH + "/emba", "-f", fw_path, "-l", log_dir, "-p", profile, "-W", ...],
+    ["sudo", EMBA_PATH + "/emba", "-f", fw_path, "-l", log_dir, "-p", profile, ...],
     cwd=EMBA_PATH,
     stdout=subprocess.PIPE,
     stderr=subprocess.STDOUT
@@ -189,11 +186,11 @@ subprocess.Popen(
 
 | 配置 | 默认值 | 说明 |
 |---|---|---|
-| EMBA_PATH | `/home/gst/yzhang/emba` | EMBA 项目根目录 |
-| EMBA_LOG_BASE_DIR | `/tmp/emba-api-logs` | 扫描日志基础目录 |
+| EMBA_PATH | `/home/gst/emba` | EMBA 项目根目录 |
+| EMBA_LOG_BASE_DIR | `/home/gst/emba-log` | 扫描日志基础目录 |
 | EMBA_MAX_CONCURRENT_SCANS | 1 | 最大并发扫描数 |
 | EMBA_HOST | `0.0.0.0` | 监听地址 |
-| EMBA_PORT | 8000 | 监听端口 |
+| EMBA_PORT | 8203 | 监听端口 |
 
 ## 部署方式
 
@@ -261,6 +258,6 @@ emba-api/
 2. **选择文件** → 用户选择固件文件和配置文件
 3. **点击扫描** → `POST /api/scan` 上传文件，返回 task_id
 4. **建立 WebSocket** → 连接 `WS /ws/scan/{task_id}` 接收进度
-5. **进度更新** → 实时更新进度条和当前模块名
+5. **进度更新** → 实时更新 WebSocket 日志消息
 6. **扫描完成** → 自动刷新任务列表，显示结果链接
 7. **下载结果** → 点击按钮调用对应 API 下载日志/报告/SBOM

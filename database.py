@@ -28,14 +28,18 @@ def init_db() -> None:
             log_dir        TEXT NOT NULL,
             created_at     TEXT NOT NULL,
             completed_at   TEXT,
-            current_module TEXT,
             elapsed_seconds REAL DEFAULT 0,
             exit_code      INTEGER,
-            console_log_tmp TEXT
+            console_log_tmp TEXT,
+            firmware_tmp_dir TEXT
         )
     """)
     try:
         conn.execute("ALTER TABLE tasks ADD COLUMN console_log_tmp TEXT")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN firmware_tmp_dir TEXT")
     except sqlite3.OperationalError:
         pass
     conn.commit()
@@ -64,6 +68,17 @@ def db_update_console_log_tmp(task_id: str, console_log_tmp: str) -> None:
         conn.close()
 
 
+def db_update_firmware_tmp_dir(task_id: str, firmware_tmp_dir: str) -> None:
+    with _lock:
+        conn = _get_conn()
+        conn.execute(
+            "UPDATE tasks SET firmware_tmp_dir = ? WHERE task_id = ?",
+            (firmware_tmp_dir, task_id),
+        )
+        conn.commit()
+        conn.close()
+
+
 def db_update_status(task_id: str, status: str) -> None:
     with _lock:
         conn = _get_conn()
@@ -72,12 +87,12 @@ def db_update_status(task_id: str, status: str) -> None:
         conn.close()
 
 
-def db_update_progress(task_id: str, current_module: str, elapsed_seconds: float) -> None:
+def db_update_progress(task_id: str, elapsed_seconds: float) -> None:
     with _lock:
         conn = _get_conn()
         conn.execute(
-            "UPDATE tasks SET current_module = ?, elapsed_seconds = ? WHERE task_id = ?",
-            (current_module, elapsed_seconds, task_id),
+            "UPDATE tasks SET elapsed_seconds = ? WHERE task_id = ?",
+            (elapsed_seconds, task_id),
         )
         conn.commit()
         conn.close()

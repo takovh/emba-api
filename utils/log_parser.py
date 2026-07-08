@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-import re
-from datetime import datetime
-from typing import Optional
 
-MODULE_PATTERN = re.compile(
-    r"\[\*\]\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\s+-\s+Module\s+(\S+)"
-)
-PHASE_STARTED = re.compile(r"(\w[\w\s]*phase)\s+started", re.IGNORECASE)
-PHASE_ENDED = re.compile(r"(\w[\w\s]*phase)\s+ended", re.IGNORECASE)
-TEST_ENDED = re.compile(r"Test ended on", re.IGNORECASE)
+class LogReader:
+    def __init__(self, log_path: str) -> None:
+        self.log_path = log_path
+        self._offset = 0
 
-
-def parse_log_line(line: str) -> Optional[str]:
-    m = MODULE_PATTERN.search(line)
-    if m:
-        return m.group(1)
-    return None
-
-
-def is_scan_finished(line: str) -> bool:
-    return bool(PHASE_ENDED.search(line) or TEST_ENDED.search(line))
+    def read_new_lines(self) -> list[str]:
+        try:
+            with open(self.log_path, "rb") as f:
+                f.seek(self._offset)
+                data = f.read().decode("utf-8", errors="replace")
+                self._offset = f.tell()
+                if not data:
+                    return []
+                lines = data.splitlines()
+                return [l for l in lines if l]
+        except FileNotFoundError:
+            return []
 
 
 def get_last_log_line(log_path: str) -> str:
