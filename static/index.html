@@ -174,7 +174,7 @@ async function loadTasks(page) {
         <td class="actions">
           <button class="btn-link" onclick="openTab('${t.task_id}','${t.status}')">Logs</button>
           ${t.status === 'completed' ? `
-            <a class="btn-link" href="${API}/api/scan/${t.task_id}/report" target="_blank">Report</a>
+            <a class="btn-link" href="${API}/api/scan/${t.task_id}/report" target="_blank">Archive222</a>
             <a class="btn-link" href="${API}/api/scan/${t.task_id}/sbom" target="_blank">SBOM</a>
           ` : ''}
           <button class="btn-link" style="color:#f85149" onclick="deleteTask('${t.task_id}')">Delete</button>

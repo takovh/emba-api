@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from starlette.background import BackgroundTask
 
 from config import EMBA_PATH, EMBA_VERSION_FILE
 from models import ScanCreateResponse, VersionResponse
@@ -114,20 +117,21 @@ def get_scan_report(task_id: str) -> FileResponse:
     task = get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    report_dir = Path(task["log_dir"]) / "html-report"
-    if not report_dir.exists():
-        raise HTTPException(status_code=404, detail="HTML report not found")
+    log_dir = Path(task["log_dir"])
+    if not log_dir.exists():
+        raise HTTPException(status_code=404, detail="Log directory not found")
 
-    zip_path = Path(task["log_dir"]) / "html-report.zip"
-    if not zip_path.exists():
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file in report_dir.rglob("*"):
-                if file.is_file():
-                    zf.write(file, file.relative_to(report_dir))
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="emba-log-", suffix=".zip")
+    os.close(tmp_fd)
+    with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file in log_dir.rglob("*"):
+            if file.is_file():
+                zf.write(file, file.relative_to(log_dir))
     return FileResponse(
-        path=str(zip_path),
+        path=tmp_path,
         media_type="application/zip",
-        filename=f"emba-report-{task_id}.zip",
+        filename=f"emba-log-{task_id}.zip",
+        background=BackgroundTask(os.remove, tmp_path),
     )
 
 
