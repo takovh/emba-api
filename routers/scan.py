@@ -49,6 +49,7 @@ async def create_scan(
     modules: Optional[str] = Form(None),
     profile: Optional[str] = Form(None),
     arch: Optional[str] = Form(None),
+    name: Optional[str] = Form(None),
 ) -> ScanCreateResponse:
     from config import EMBA_MAX_CONCURRENT_SCANS
 
@@ -72,6 +73,7 @@ async def create_scan(
         modules=modules,
         profile=profile,
         arch=arch,
+        name=name,
     )
     return ScanCreateResponse(
         task_id=task["task_id"],
@@ -87,6 +89,7 @@ def get_scan_status(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
     return {
         "task_id": task["task_id"],
+        "name": task["name"],
         "status": task["status"],
         "elapsed_seconds": task["elapsed_seconds"],
         "created_at": task["created_at"],
@@ -160,6 +163,7 @@ def list_scans(page: int = 1, page_size: int = 20):
         "items": [
             {
                 "task_id": t["task_id"],
+                "name": t["name"],
                 "status": t["status"],
                 "elapsed_seconds": t["elapsed_seconds"],
                 "created_at": t["created_at"],

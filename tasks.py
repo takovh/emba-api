@@ -88,11 +88,12 @@ def start_scan(
     modules: Optional[str] = None,
     profile: Optional[str] = None,
     arch: Optional[str] = None,
+    name: Optional[str] = None,
 ) -> dict:
     task_id = uuid.uuid4().hex[:12]
     log_dir = str(Path(EMBA_LOG_BASE_DIR) / task_id)
 
-    db_insert_task(task_id, log_dir)
+    db_insert_task(task_id, log_dir, name or Path(firmware_path).name)
     if firmware_tmp_dir:
         db_update_firmware_tmp_dir(task_id, firmware_tmp_dir)
 

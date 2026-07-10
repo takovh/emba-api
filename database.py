@@ -31,7 +31,8 @@ def init_db() -> None:
             elapsed_seconds REAL DEFAULT 0,
             exit_code      INTEGER,
             console_log_tmp TEXT,
-            firmware_tmp_dir TEXT
+            firmware_tmp_dir TEXT,
+            name           TEXT
         )
     """)
     try:
@@ -42,16 +43,20 @@ def init_db() -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN firmware_tmp_dir TEXT")
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN name TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
 
-def db_insert_task(task_id: str, log_dir: str) -> None:
+def db_insert_task(task_id: str, log_dir: str, name: str) -> None:
     with _lock:
         conn = _get_conn()
         conn.execute(
-            "INSERT INTO tasks (task_id, log_dir, created_at) VALUES (?, ?, ?)",
-            (task_id, log_dir, datetime.now(timezone.utc).isoformat()),
+            "INSERT INTO tasks (task_id, log_dir, created_at, name) VALUES (?, ?, ?, ?)",
+            (task_id, log_dir, datetime.now(timezone.utc).isoformat(), name),
         )
         conn.commit()
         conn.close()
