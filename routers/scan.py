@@ -129,8 +129,7 @@ def get_scan_report(task_id: str) -> FileResponse:
                 mtime = file.stat().st_mtime
                 arcname = file.relative_to(log_dir)
                 if mtime < 315532800:  # before 1980-01-01
-                    zi = zipfile.ZipInfo.from_file(file, arcname)
-                    zi.date_time = (1980, 1, 1, 0, 0, 0)
+                    zi = zipfile.ZipInfo(str(arcname), (1980, 1, 1, 0, 0, 0))
                     with open(file, "rb") as f:
                         zf.writestr(zi, f.read())
                 else:
