@@ -2,3 +2,6 @@
 __pycache__
 __init__.py
 .vscode
+
+
+build/
