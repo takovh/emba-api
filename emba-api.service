@@ -10,8 +10,8 @@ Restart=always
 RestartSec=5
 Environment=EMBA_HOST=0.0.0.0
 Environment=EMBA_PORT=8203
-Environment=EMBA_PATH=/home/tako/workspace/emba
-Environment=EMBA_LOG_BASE_DIR=/home/tako/workspace/emba-log
+Environment=EMBA_HOME=/home/tako/workspace/emba
+Environment=EMBA_LOG_DIR=/home/tako/workspace/emba-log
 Environment=EMBA_MAX_CONCURRENT_SCANS=1
 
 [Install]

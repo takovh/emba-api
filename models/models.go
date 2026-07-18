@@ -2,7 +2,7 @@ package models
 
 type VersionResponse struct {
 	Version  string `json:"version"`
-	EmbaPath string `json:"emba_path"`
+	EmbaHome string `json:"emba_home"`
 }
 
 type ScanCreateResponse struct {

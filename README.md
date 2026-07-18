@@ -33,7 +33,7 @@ go build -o emba-api .
 ./emba-api
 
 # 或指定自定义配置
-EMBA_PATH=/path/to/emba EMBA_LOG_BASE_DIR=/data/emba-logs ./emba-api
+EMBA_HOME=/path/to/emba EMBA_LOG_DIR=/data/emba-logs ./emba-api
 ```
 
 ### 安装为 systemd 服务
@@ -56,8 +56,8 @@ sudo ./scripts/uninstall.sh
 |---------|--------|------|
 | `EMBA_HOST` | `0.0.0.0` | 监听地址 |
 | `EMBA_PORT` | `8203` | 监听端口 |
-| `EMBA_PATH` | `/home/tako/workspace/emba` | EMBA 安装目录 |
-| `EMBA_LOG_BASE_DIR` | `/home/tako/workspace/emba-log` | 扫描日志根目录 |
+| `EMBA_HOME` | `/home/tako/workspace/emba` | EMBA 安装目录 |
+| `EMBA_LOG_DIR` | `/home/tako/workspace/emba-log` | 扫描日志根目录 |
 | `EMBA_MAX_CONCURRENT_SCANS` | `1` | 最大并发扫描数 |
 
 ## API 文档
@@ -67,7 +67,7 @@ sudo ./scripts/uninstall.sh
 查询 EMBA 版本。
 
 ```json
-{"version": "1.4.2", "emba_path": "/home/tako/workspace/emba"}
+{"version": "1.4.2", "emba_home": "/home/tako/workspace/emba"}
 ```
 
 ### `GET /api/scan/profiles`

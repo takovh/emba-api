@@ -11,8 +11,9 @@ import (
 type Config struct {
 	Host               string `yaml:"host"`
 	Port               int    `yaml:"port"`
-	EmbaPath           string `yaml:"emba_path"`
-	LogBaseDir         string `yaml:"log_base_dir"`
+	EmbaHome           string `yaml:"emba_home"`
+	EmbaLogDir         string `yaml:"emba_log_dir"`
+	ApiLogDir          string `yaml:"api_log_dir"`
 	MaxConcurrentScans int    `yaml:"max_concurrent_scans"`
 	VersionFile        string `yaml:"-"`
 }
@@ -23,8 +24,8 @@ func defaults() *Config {
 	return &Config{
 		Host:               "0.0.0.0",
 		Port:               8203,
-		EmbaPath:           "/home/gst/emba",
-		LogBaseDir:         "/home/gst/emba-log",
+		EmbaHome:           "/home/gst/emba",
+		EmbaLogDir:         "/home/gst/emba-log",
 		MaxConcurrentScans: 1,
 	}
 }
@@ -53,11 +54,11 @@ func Load() *Config {
 			cfg.Port = n
 		}
 	}
-	if v := os.Getenv("EMBA_PATH"); v != "" {
-		cfg.EmbaPath = v
+	if v := os.Getenv("EMBA_HOME"); v != "" {
+		cfg.EmbaHome = v
 	}
-	if v := os.Getenv("EMBA_LOG_BASE_DIR"); v != "" {
-		cfg.LogBaseDir = v
+	if v := os.Getenv("EMBA_LOG_DIR"); v != "" {
+		cfg.EmbaLogDir = v
 	}
 	if v := os.Getenv("EMBA_MAX_CONCURRENT_SCANS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -65,9 +66,9 @@ func Load() *Config {
 		}
 	}
 
-	cfg.VersionFile = filepath.Join(cfg.EmbaPath, "config", "VERSION.txt")
+	cfg.VersionFile = filepath.Join(cfg.EmbaHome, "config", "VERSION.txt")
 
-	os.MkdirAll(cfg.LogBaseDir, 0755)
+	os.MkdirAll(cfg.EmbaLogDir, 0755)
 
 	Cfg = cfg
 	return Cfg

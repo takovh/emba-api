@@ -128,7 +128,7 @@ async function loadVersion() {
     const r = await fetch(`${API}/api/version`);
     const d = await r.json();
     document.getElementById('version').textContent = `v${d.version}`;
-    document.getElementById('embaPath').textContent = d.emba_path;
+    document.getElementById('embaPath').textContent = d.emba_home;
   } catch(e) {
     document.getElementById('version').textContent = 'v?';
   }

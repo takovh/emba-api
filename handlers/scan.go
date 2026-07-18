@@ -24,12 +24,12 @@ func HandleVersion(w http.ResponseWriter, r *http.Request) {
 	if data, err := os.ReadFile(cfg.VersionFile); err == nil {
 		version = strings.TrimSpace(string(data))
 	}
-	writeJSON(w, http.StatusOK, models.VersionResponse{Version: version, EmbaPath: cfg.EmbaPath})
+	writeJSON(w, http.StatusOK, models.VersionResponse{Version: version, EmbaHome: cfg.EmbaHome})
 }
 
 func HandleProfiles(w http.ResponseWriter, r *http.Request) {
 	cfg := config.Load()
-	profilesDir := filepath.Join(cfg.EmbaPath, "scan-profiles")
+	profilesDir := filepath.Join(cfg.EmbaHome, "scan-profiles")
 	matches, err := filepath.Glob(filepath.Join(profilesDir, "*.emba"))
 	profiles := make([]string, 0)
 	if err == nil {

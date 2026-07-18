@@ -31,7 +31,7 @@ func StartScan(firmwarePath, firmwareTmpDir, modules, profile, arch, name string
 	cfg := config.Load()
 
 	taskID := genTaskID()
-	logDir := filepath.Join(cfg.LogBaseDir, taskID)
+	logDir := filepath.Join(cfg.EmbaLogDir, taskID)
 
 	os.MkdirAll(logDir, 0755)
 	if name == "" {
@@ -42,7 +42,7 @@ func StartScan(firmwarePath, firmwareTmpDir, modules, profile, arch, name string
 		database.UpdateFirmwareTmpDir(taskID, firmwareTmpDir)
 	}
 
-	embaBin := filepath.Join(cfg.EmbaPath, "emba")
+	embaBin := filepath.Join(cfg.EmbaHome, "emba")
 	cmdArgs := []string{"sudo", embaBin, "-f", firmwarePath, "-l", logDir}
 	if profile != "" {
 		cmdArgs = append(cmdArgs, "-p", profile)
@@ -79,7 +79,7 @@ func StartScan(firmwarePath, firmwareTmpDir, modules, profile, arch, name string
 	}
 
 	cmd := exec.Command(cmdArgs[0], cmdArgs[1:]...)
-	cmd.Dir = cfg.EmbaPath
+	cmd.Dir = cfg.EmbaHome
 	cmd.Stdout = consoleTmp
 	cmd.Stderr = consoleTmp
 	cmd.SysProcAttr = setPG()

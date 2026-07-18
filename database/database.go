@@ -33,8 +33,8 @@ type TaskRow struct {
 
 func InitDB() error {
 	cfg := config.Load()
-	os.MkdirAll(cfg.LogBaseDir, 0755)
-	dbPath := filepath.Join(cfg.LogBaseDir, ".emba-api.db")
+	os.MkdirAll(cfg.EmbaLogDir, 0755)
+	dbPath := filepath.Join(cfg.EmbaLogDir, ".emba-api.db")
 
 	var err error
 	db, err = sql.Open("sqlite", dbPath)

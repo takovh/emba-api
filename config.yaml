@@ -1,5 +1,5 @@
 host: 0.0.0.0
 port: 8080
-emba_path: /home/tako/workspace/emba
-log_base_dir: /home/tako/workspace/emba-log
+emba_home: /home/tako/workspace/emba
+emba_log_dir: /home/tako/workspace/emba-log
 max_concurrent_scans: 1
